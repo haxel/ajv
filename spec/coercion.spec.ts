@@ -1,6 +1,20 @@
 import type Ajv from ".."
 import _Ajv from "./ajv"
-require("./chai").should()
+import chai from "chai"
+chai.should()
+
+const dummyObject = {
+  definitions: {
+    Foo: {
+      type: "object",
+      required: ["bar"],
+      properties: {
+        bar: {type: "number"},
+      },
+    },
+  },
+  data: {bar: "1"},
+}
 
 const coercionRules = {
   string: {
@@ -166,14 +180,26 @@ coercionArrayRules.null.array = [
   {from: [true], to: undefined},
   {from: [{}], to: undefined},
 ]
-coercionArrayRules.object.array = [{from: [{}], to: undefined}]
+coercionArrayRules.object.array = [
+  {
+    from: [dummyObject.data],
+    to: {type: "object", $ref: "#/definitions/Foo"},
+    definitions: dummyObject.definitions,
+  },
+]
 
 coercionArrayRules.array = {
   string: [{from: "abc", to: ["abc"]}],
   number: [{from: 1, to: [1]}],
   boolean: [{from: true, to: [true]}],
   null: [{from: null, to: [null]}],
-  object: [{from: {}, to: undefined}],
+  object: [
+    {
+      from: dummyObject.data,
+      to: [{type: "object", $ref: "#/definitions/Foo"}],
+      definitions: dummyObject.definitions,
+    },
+  ],
 }
 
 describe("Type coercion", () => {
@@ -203,7 +229,11 @@ describe("Type coercion", () => {
     testRules(coercionArrayRules, (test, schema, canCoerce, toType, fromType) => {
       instances.forEach((_ajv) => {
         const valid = _ajv.validate(schema, test.from)
-        if (valid !== canCoerce) console.log(toType, ".", fromType, test, schema, ajv.errors)
+        if (valid !== canCoerce)
+          console.dir(
+            {coerce: `${toType} <- ${fromType}`, test, schema, errors: ajv.errors},
+            {depth: null}
+          )
         valid.should.equal(canCoerce)
       })
     })
@@ -473,10 +503,22 @@ describe("Type coercion", () => {
         const tests = rules[toType][fromType]
         tests.forEach((test) => {
           const canCoerce = test.to !== undefined
+          const arrayType = Array.isArray(test.to)
           const schema = canCoerce
-            ? Array.isArray(test.to)
-              ? {type: toType, items: {type: fromType, enum: [test.to[0]]}}
-              : {type: toType, enum: [test.to]}
+            ? "definitions" in test
+              ? {
+                  type: toType,
+                  definitions: test.definitions,
+                  ...(arrayType
+                    ? {items: test.to[0]}
+                    : {type: "object", $ref: `#/definitions/${Object.keys(test.definitions)[0]}`}),
+                }
+              : {
+                  type: toType,
+                  ...(arrayType
+                    ? {items: {type: fromType, enum: [test.to[0]]}}
+                    : {enum: [test.to]}),
+                }
             : {type: toType}
           cb(test, schema, canCoerce, toType, fromType)
         })
